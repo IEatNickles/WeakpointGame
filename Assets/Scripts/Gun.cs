@@ -7,7 +7,7 @@ public class Gun : MonoBehaviour {
   }
   [SerializeField] Type m_type;
 
-  [SerializeField] float m_damage;
+  [SerializeField] int m_damage;
   [SerializeField] float m_range;
   [SerializeField] float m_fireRate;
   float m_cooldown;
@@ -17,7 +17,9 @@ public class Gun : MonoBehaviour {
     switch (m_type) {
       case Type.Raycast:
         if (Physics.Raycast(eye, direction, out var hit, m_range, ~Player.PLAYER_LAYER)) {
-          Debug.Log(hit.collider.name);
+          if (hit.collider.gameObject.TryGetComponent<Weakpoint>(out var wp)) {
+            wp.TakeDamage(m_damage);
+          }
         }
         break;
       case Type.Object:
