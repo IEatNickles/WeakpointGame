@@ -1,18 +1,14 @@
 using System.Collections.Generic;
-using Unity.AI.Navigation;
-using UnityEngine;
 
-public class Enemies {
-  static HashSet<Enemy> m_enemies = new();
+public static class Enemies {
+  static readonly HashSet<Enemy> m_enemies = new();
 
   public static void Init() {
   }
 
   public static void Tick() {
     foreach (var e in m_enemies) {
-      if (e != null) {
-        e.Tick();
-      }
+      e?.Tick();
     }
   }
 

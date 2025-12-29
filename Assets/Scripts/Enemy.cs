@@ -3,6 +3,8 @@ using UnityEngine.AI;
 using UnityEngine;
 
 public class Enemy : MonoBehaviour {
+  public const int ENEMY_LAYER = 1 << 6;
+
   [SerializeField] protected Transform m_target;
 
   public Material WeakpointActiveMat => m_weakpointActiveMat;
@@ -13,7 +15,7 @@ public class Enemy : MonoBehaviour {
   protected NavMeshAgent m_agent;
 
   [SerializeField] List<Weakpoint> m_weakpoints = new();
-  int m_activeWeakpoint = 0;
+  int m_activeWeakpoint;
 
   void Awake() {
     Debug.Assert(m_weakpoints.Count > 0, "Enemy needs at least one weakpoint");
@@ -21,6 +23,7 @@ public class Enemy : MonoBehaviour {
       wp.Init(this);
       wp.SetInactive();
     }
+
     m_weakpoints[0].SetActive();
 
     if (m_target == null) {
@@ -28,8 +31,6 @@ public class Enemy : MonoBehaviour {
     }
 
     m_agent = GetComponent<NavMeshAgent>();
-    m_agent.enabled = false;
-    m_agent.enabled = true;
 
     Enemies.AddEnemy(this);
   }

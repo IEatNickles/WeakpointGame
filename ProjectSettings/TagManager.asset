@@ -5,6 +5,7 @@ TagManager:
   serializedVersion: 3
   tags:
   - Launcher
+  - Projectile
   layers:
   - Default
   - TransparentFX

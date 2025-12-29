@@ -12,11 +12,9 @@ public class Player : MonoBehaviour, ICharacterController {
     Crouching,
     Dashing,
   }
-  public MovementState MoveState {
-    get { return m_moveState; }
-    set { m_moveState = value; }
-  }
-  MovementState m_moveState;
+
+  public MovementState MoveState { get; private set; }
+
   MovementState m_lastMoveState;
 
   public KinematicCharacterMotor Motor;
@@ -24,12 +22,12 @@ public class Player : MonoBehaviour, ICharacterController {
   [SerializeField] float m_speed = 16f;
   [SerializeField] float m_dashSpeed = 30f;
   [SerializeField] float m_dashTime = 3f;
-  float m_lastDash = 0f;
+  float m_lastDash;
   Vector3 m_dashDir;
   [SerializeField] float m_airAccel = 0.1f;
   [SerializeField] float m_jumpForce = 15f;
   [SerializeField] float m_jumpCooldown = 0.2f;
-  float m_lastJump = 0f;
+  float m_lastJump;
   [SerializeField] float m_drag = 0.6f;
 
   [SerializeField] int m_maxWallJumps = 3;
@@ -51,6 +49,8 @@ public class Player : MonoBehaviour, ICharacterController {
   [SerializeField] Slider m_healthBar;
   bool m_isDead;
 
+  [SerializeField] float m_punchDistance;
+
   public const int PLAYER_LAYER = 1 << 3;
 
   Vector2 m_inputDir;
@@ -61,6 +61,7 @@ public class Player : MonoBehaviour, ICharacterController {
   InputAction m_jumpAction;
   InputAction m_dashAction;
   InputAction m_shootAction;
+  InputAction m_punchAction;
 
   bool m_jumping;
 
@@ -71,7 +72,7 @@ public class Player : MonoBehaviour, ICharacterController {
   Vector3 right;
 
   [SerializeField] Transform m_gunHolder;
-  List<Gun> m_guns = new();
+  readonly List<Gun> m_guns = new();
 
   Vector3 m_velocity;
 
@@ -93,6 +94,8 @@ public class Player : MonoBehaviour, ICharacterController {
     m_dashAction.performed += OnDash;
     m_shootAction = m_playerInput.actions.FindAction("Shoot");
     m_shootAction.performed += OnShoot;
+    m_punchAction = m_playerInput.actions.FindAction("Punch");
+    m_punchAction.performed += OnPunch;
 
     Cursor.lockState = CursorLockMode.Locked;
     Cursor.visible = false;
@@ -116,12 +119,14 @@ public class Player : MonoBehaviour, ICharacterController {
     m_camera.position = transform.position + Vector3.up * (Motor.Capsule.height * 0.4f);
 
     if (m_inputDir.x > 0) {
-      m_cameraRot.z = Mathf.Lerp(m_cameraRot.z, -m_cameraTiltAngle, 1f - Mathf.Exp(-m_cameraTiltSpeed * Time.deltaTime));
+      m_cameraRot.z = Mathf.Lerp(m_cameraRot.z, -m_cameraTiltAngle,
+        1f - Mathf.Exp(-m_cameraTiltSpeed * Time.deltaTime));
     } else if (m_inputDir.x < 0) {
       m_cameraRot.z = Mathf.Lerp(m_cameraRot.z, m_cameraTiltAngle, 1f - Mathf.Exp(-m_cameraTiltSpeed * Time.deltaTime));
     } else {
       m_cameraRot.z = Mathf.Lerp(m_cameraRot.z, 0f, 1f - Mathf.Exp(-m_cameraTiltSpeed * Time.deltaTime));
     }
+
     m_camera.localEulerAngles = new Vector3(-m_cameraRot.y, m_cameraRot.x, m_cameraRot.z);
   }
 
@@ -132,7 +137,7 @@ public class Player : MonoBehaviour, ICharacterController {
 
   void OnDash(InputAction.CallbackContext ctx) {
     if (ctx.action.IsPressed()) {
-      m_moveState = MovementState.Dashing;
+      MoveState = MovementState.Dashing;
       m_lastDash = Time.time;
       if (m_inputDir.sqrMagnitude > 0f) {
         m_dashDir = forward * m_inputDir.y + right * m_inputDir.x;
@@ -145,6 +150,21 @@ public class Player : MonoBehaviour, ICharacterController {
   void OnShoot(InputAction.CallbackContext ctx) {
     if (ctx.action.IsPressed()) {
       m_guns[0].Shoot(m_camera.position, m_camera.forward);
+    }
+  }
+
+  void OnPunch(InputAction.CallbackContext ctx) {
+    var cols = new Collider[4];
+    int n = Physics.OverlapSphereNonAlloc(m_camera.position, m_punchDistance, cols, ~PLAYER_LAYER);
+    if (n > 0) {
+      for (int i = 0; i < n; ++i) {
+        var col = cols[i];
+        if (col.CompareTag("Projectile") && col.gameObject.TryGetComponent(out Projectile proj)) {
+          proj.ChangeDirection(m_camera.forward);
+          proj.transform.position = m_camera.position + m_camera.forward;
+          break;
+        }
+      }
     }
   }
 
@@ -163,45 +183,55 @@ public class Player : MonoBehaviour, ICharacterController {
     }
 
     Vector3 moveDir = forward * m_inputDir.y + right * m_inputDir.x;
-    switch (m_moveState) {
-      case MovementState.Walking:
-      case MovementState.Crouching:
-        if (Motor.GroundingStatus.IsStableOnGround) {
-          currentVelocity = Motor.GetDirectionTangentToSurface(currentVelocity, Motor.GroundingStatus.GroundNormal).normalized * currentVelocity.magnitude;
-          Vector3 targetVel = Motor.GetDirectionTangentToSurface(moveDir, Motor.GroundingStatus.GroundNormal).normalized * m_speed + Vector3.up * currentVelocity.y;
+    switch (MoveState) {
+    case MovementState.Walking:
+    case MovementState.Crouching:
+      if (Motor.GroundingStatus.IsStableOnGround) {
+        currentVelocity =
+          Motor.GetDirectionTangentToSurface(currentVelocity, Motor.GroundingStatus.GroundNormal).normalized *
+          currentVelocity.magnitude;
+        Vector3 targetVel =
+          Motor.GetDirectionTangentToSurface(moveDir, Motor.GroundingStatus.GroundNormal).normalized * m_speed +
+          Vector3.up * currentVelocity.y;
 
-          currentVelocity = Vector3.Lerp(currentVelocity, targetVel, 1f - Mathf.Exp(-15 * deltaTime));
-        } else {
-          Vector3 targetVel = moveDir * m_speed;
-          Vector3 airVel = Vector3.zero;
-          if ((targetVel.x > 0f && currentVelocity.x < targetVel.x) || (targetVel.x < 0f && currentVelocity.x > targetVel.x)) {
-            airVel.x = targetVel.x;
-          }
-          if ((targetVel.z > 0f && currentVelocity.z < targetVel.z) || (targetVel.z < 0f && currentVelocity.z > targetVel.z)) {
-            airVel.z = targetVel.z;
-          }
+        currentVelocity = Vector3.Lerp(currentVelocity, targetVel, 1f - Mathf.Exp(-15 * deltaTime));
+      } else {
+        Vector3 targetVel = moveDir * m_speed;
+        Vector3 airVel = Vector3.zero;
+        if ((targetVel.x > 0f && currentVelocity.x < targetVel.x) ||
+            (targetVel.x < 0f && currentVelocity.x > targetVel.x)) {
+          airVel.x = targetVel.x;
+        }
 
-          currentVelocity += airVel * m_airAccel;
+        if ((targetVel.z > 0f && currentVelocity.z < targetVel.z) ||
+            (targetVel.z < 0f && currentVelocity.z > targetVel.z)) {
+          airVel.z = targetVel.z;
         }
-        break;
-      // case MovementState.Sliding:
-      //   Vector3 r = right * m_inputDir.x * deltaTime * m_slideStrafeForce;
-      //   currentVelocity += r;
-      //   if (Motor.GroundingStatus.IsStableOnGround) {
-      //     currentVelocity += Physics.gravity * deltaTime;
-      //     if (currentVelocity.magnitude < m_slideForce) {
-      //       currentVelocity = Motor.GetDirectionTangentToSurface(m_slideDir + r, Motor.GroundingStatus.GroundNormal).normalized * m_slideForce;
-      //     }
-      //   }
-      //   break;
-      case MovementState.Dashing:
-        if (Time.time - m_lastDash >= m_dashTime) {
-          m_moveState = MovementState.Walking;
-          currentVelocity = (m_dashDir * m_speed);
-        } else {
-          currentVelocity = (m_dashDir * m_dashSpeed);
-        }
-        break;
+
+        currentVelocity += airVel * m_airAccel;
+      }
+
+      break;
+    case MovementState.Sliding:
+      break;
+    //   Vector3 r = right * m_inputDir.x * deltaTime * m_slideStrafeForce;
+    //   currentVelocity += r;
+    //   if (Motor.GroundingStatus.IsStableOnGround) {
+    //     currentVelocity += Physics.gravity * deltaTime;
+    //     if (currentVelocity.magnitude < m_slideForce) {
+    //       currentVelocity = Motor.GetDirectionTangentToSurface(m_slideDir + r, Motor.GroundingStatus.GroundNormal).normalized * m_slideForce;
+    //     }
+    //   }
+    //   break;
+    case MovementState.Dashing:
+      if (Time.time - m_lastDash >= m_dashTime) {
+        MoveState = MovementState.Walking;
+        currentVelocity = (m_dashDir * m_speed);
+      } else {
+        currentVelocity = (m_dashDir * m_dashSpeed);
+      }
+
+      break;
     }
 
     m_speedText.text = new Vector2(Motor.Velocity.x, Motor.Velocity.z).magnitude.ToString("0.00");
@@ -209,7 +239,9 @@ public class Player : MonoBehaviour, ICharacterController {
 
     if (m_jumping) {
       Collider[] cols = new Collider[4];
-      bool wallJump = Physics.OverlapSphereNonAlloc(Motor.TransientPosition, Motor.Capsule.radius + 0.1f, cols, ~PLAYER_LAYER) > 0 && m_wallJumps > 0;
+      bool wallJump =
+        Physics.OverlapSphereNonAlloc(Motor.TransientPosition, Motor.Capsule.radius + 0.1f, cols, ~PLAYER_LAYER) > 0 &&
+        m_wallJumps > 0;
       if (Motor.GroundingStatus.IsStableOnGround) {
         currentVelocity.y = m_jumpForce;
         Motor.ForceUnground();
@@ -221,11 +253,13 @@ public class Player : MonoBehaviour, ICharacterController {
         Motor.ForceUnground();
         Vector3 dir = Vector3.zero;
         foreach (var col in cols) {
-          if (col == null) {
+          if (col is null) {
             break;
           }
+
           dir += (Motor.TransientPosition - col.ClosestPointOnBounds(Motor.TransientPosition)).normalized;
         }
+
         dir = dir.normalized * m_wallJumpHorizontalForce;
         dir.y = m_wallJumpVerticalForce;
         currentVelocity = dir;
@@ -238,7 +272,7 @@ public class Player : MonoBehaviour, ICharacterController {
 
   public void TakeDamage(int damage) {
     m_health -= damage;
-    m_healthBar.value = (float)m_health / (float)m_maxHealth;
+    m_healthBar.value = (float)m_health / m_maxHealth;
     if (m_health <= 0) {
       m_isDead = true;
     }
@@ -251,20 +285,24 @@ public class Player : MonoBehaviour, ICharacterController {
   }
 
   public void AfterCharacterUpdate(float deltaTime) {
-    m_lastMoveState = m_moveState;
+    m_lastMoveState = MoveState;
   }
 
   public bool IsColliderValidForCollisions(Collider coll) {
     return true;
   }
 
-  public void OnGroundHit(Collider hitCollider, Vector3 hitNormal, Vector3 hitPoint, ref HitStabilityReport hitStabilityReport) {
+  public void OnGroundHit(Collider hitCollider, Vector3 hitNormal, Vector3 hitPoint,
+                          ref HitStabilityReport hitStabilityReport) {
   }
 
-  public void OnMovementHit(Collider hitCollider, Vector3 hitNormal, Vector3 hitPoint, ref HitStabilityReport hitStabilityReport) {
+  public void OnMovementHit(Collider hitCollider, Vector3 hitNormal, Vector3 hitPoint,
+                            ref HitStabilityReport hitStabilityReport) {
   }
 
-  public void ProcessHitStabilityReport(Collider hitCollider, Vector3 hitNormal, Vector3 hitPoint, Vector3 atCharacterPosition, Quaternion atCharacterRotation, ref HitStabilityReport hitStabilityReport) {
+  public void ProcessHitStabilityReport(Collider hitCollider, Vector3 hitNormal, Vector3 hitPoint,
+                                        Vector3 atCharacterPosition, Quaternion atCharacterRotation,
+                                        ref HitStabilityReport hitStabilityReport) {
   }
 
   public void OnDiscreteCollisionDetected(Collider hitCollider) {
